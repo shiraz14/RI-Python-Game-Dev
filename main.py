@@ -7,7 +7,7 @@ HOW TO RUN:
     python main.py
 
 CONTROLS:
-    ESC  → Quit the gamedsadadsadds
+    ESC  → Quit the gamedsadadsaddsdsadsad
 """
 
 import os
