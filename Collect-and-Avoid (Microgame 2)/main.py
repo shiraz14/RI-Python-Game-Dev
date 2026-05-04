@@ -47,8 +47,9 @@ RED    = (255,   0,   0)
 GREEN = (0,   255,   0)
 GRAY   = ( 40,  40,  40)   # subtle grid / background tint
 
+font = pygame.font.Font(None, 36)
 # ─────────────────────────────────────────
-#  GAME OBJECTS
+#  GAME OBJECTS & VARIABLES
 # ─────────────────────────────────────────
 
 # Player  — white square, starts near top-left
@@ -68,6 +69,11 @@ hazards = [
     pygame.Rect(400, 150, 30, 30),
 ]
 
+# Add more hazards
+# hazards.append(pygame.Rect(600, 250, 30, 30))
+
+score = 0
+
 # ─────────────────────────────────────────
 #  HELPER: draw a simple grid (optional visual)
 # ─────────────────────────────────────────
@@ -81,6 +87,7 @@ def draw_grid():
 #  GAME LOOP
 # ─────────────────────────────────────────
 running = True
+game_over = False
 
 while running:
 
@@ -117,20 +124,42 @@ while running:
     for c in collectibles[:]:
         if player.colliderect(c):
             collectibles.remove(c)
-            # feedback placeholder
+            score += 1
+
+            screen.fill(GREEN)
+            pygame.display.flip()
+            pygame.time.delay(60)
     
     # Hazard movement
     for h in hazards:
         h.x -= 3
         if h.x < -30:
             h.x = SCREEN_WIDTH
+        h.y += 2
+        if h.y > SCREEN_HEIGHT:
+            h.y = 0
     
     # Hazard 
     for h in hazards:
         if player.colliderect(h):
-            
-            # feedback placeholder
             player.x, player.y = 100, 200
+            game_over = True
+
+    if game_over:
+        # Screen flash
+        screen.fill(RED)
+        pygame.display.flip()
+        pygame.time.delay(100)
+
+        # Reset game
+        player.x, player.y = 100, 200
+        score = 0
+        collectibles = [
+            pygame.Rect(300, 100, 20, 20),
+            pygame.Rect(500, 300, 20, 20)
+        ]
+
+        game_over = False
 
     # ── RENDER ───────────────────────────
 
@@ -149,6 +178,9 @@ while running:
 
     for h in hazards:
         pygame.draw.rect(screen, RED, h)
+    
+    score_text = font.render(f"Score: {score}", True, WHITE)
+    screen.blit(score_text, (10, 10))
 
     # 4. Flip / update the display
     pygame.display.flip()
