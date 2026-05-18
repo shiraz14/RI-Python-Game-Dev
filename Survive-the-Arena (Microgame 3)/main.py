@@ -1,5 +1,6 @@
 import os
 import sys
+import random
 
 # ── ENVIRONMENT SETUP ────────────────────────────────────────────────────────
 # Set a virtual display if none exists (required for headless/Codespaces environments)
@@ -39,6 +40,9 @@ state = "menu"
 clock = pygame.time.Clock()
 FPS = 60
 
+spawn_timer = 0
+spawn_interval = 60
+
 # ── COLOURS ──────────────────────────────────────────────────────────────────
 # Reusable RGB colour constants used throughout rendering
 BLACK  = (  0,   0,   0)
@@ -61,21 +65,13 @@ PLAYER_SPEED = 5             # Pixels moved per frame
 enemy = pygame.Rect(300, 200, 40, 40)
 ENEMY_SPEED = 3
 
-# ── COLLECTIBLES ─────────────────────────────────────────────────────────────
-# Small green squares the player picks up to increase their score
-collectibles = [
-    pygame.Rect(300, 100, 20, 20),
-    pygame.Rect(500, 300, 20, 20)
-]
-
-# ── HAZARDS ──────────────────────────────────────────────────────────────────
+# ── ENEMIES ──────────────────────────────────────────────────────────────────
 # Moving red squares that reset the player and score on contact
-hazards = [
+enemies = [
     pygame.Rect(400, 150, 30, 30),
 ]
 
 # ── SCORE ────────────────────────────────────────────────────────────────────
-# Tracks how many collectibles the player has picked up this session
 score = 0
 
 # ── GRID HELPER ──────────────────────────────────────────────────────────────
@@ -88,7 +84,7 @@ def draw_grid():
 
 # ── GAME LOOP FLAGS ──────────────────────────────────────────────────────────
 # running: controls whether the main loop continues
-# game_over: signals that the player hit a hazard this frame
+# game_over: signals that the player hit a enemy this frame
 running = True
 game_over = False
 
@@ -120,6 +116,14 @@ while running:
     # All game logic is skipped while on the menu screen
     if state == "gameplay":
 
+        spawn_timer += 1
+        if spawn_timer >= spawn_interval:
+            spawn_timer = 0
+            enemies.append(pygame.Rect(random.randint(0, 600), random.randint(0, 400), 30, 30))
+
+        if spawn_interval > 15:
+            spawn_interval -= 0.005
+            
         # ── PLAYER MOVEMENT ──────────────────────────────────────────────────
         # Read which arrow keys are currently held and move the player accordingly
         keys = pygame.key.get_pressed()
@@ -136,35 +140,24 @@ while running:
         # Prevent the player from moving outside the window edges
         player.clamp_ip(screen.get_rect())
 
-        # ── COLLECTIBLE PICKUP ───────────────────────────────────────────────
-        # Check if the player overlaps any collectible; remove it and add to score
-        for c in collectibles[:]:           # Iterate a copy so we can safely remove
-            if player.colliderect(c):
-                collectibles.remove(c)
-                score += 1
+        # ── ENEMY MOVEMENT ──────────────────────────────────────────────────
+        # Each enemy tracks player
+        for e in enemies:
+            if e.x < player.x: e.x += 2
+            if e.x > player.x: e.x -= 2
+            if e.y < player.y: e.y += 2
+            if e.y > player.y: e.y -= 2
 
-                # Brief green flash to give the player feedback on pickup
-                screen.fill(GREEN)
-                pygame.display.flip()
-                pygame.time.delay(60)
-
-        # ── HAZARD MOVEMENT ──────────────────────────────────────────────────
-        # Each hazard drifts left and downward, wrapping around when it leaves the screen
-        for h in hazards:
-            h.x -= 3
-            if h.x < -30:               # Wrap from left edge back to right
-                h.x = SCREEN_WIDTH
-            h.y += 2
-            if h.y > SCREEN_HEIGHT:     # Wrap from bottom edge back to top
-                h.y = 0
-
-        # ── HAZARD COLLISION ─────────────────────────────────────────────────
-        # If the player touches a hazard, flag game_over for handling below
-        for h in hazards:
-            if player.colliderect(h):
+        # ── ENEMY COLLISION ─────────────────────────────────────────────────
+        # If the player touches a enemy, flag game_over for handling below
+        for e in enemies:
+            if player.colliderect(e):
                 player.x, player.y = 100, 200
                 state = "gameover"
                 game_over = True
+        
+        # Increase score every frame
+        score += 1
 
         # ── GAME OVER HANDLING ───────────────────────────────────────────────
         # Briefly flash red, then reset all game objects back to their starting state
@@ -173,12 +166,13 @@ while running:
             pygame.display.flip()
             pygame.time.delay(100)      # Hold the red screen for 100 ms
 
-            # Reset player position, score, and collectibles
-            player.x, player.y = 100, 200
+            # Reset player position, score
+            player.x, player.y = 300, 200
             score = 0
-            collectibles = [
-                pygame.Rect(300, 100, 20, 20),
-                pygame.Rect(500, 300, 20, 20)
+            spawn_timer = 0
+            spawn_interval = 60
+            enemies = [
+                pygame.Rect(400, 150, 30, 30),
             ]
             game_over = False           # Clear the flag so we don't loop here again
 
@@ -206,13 +200,9 @@ while running:
 
         pygame.draw.rect(screen, WHITE, player)     # Player square
 
-        # Draw all remaining collectibles as green squares
-        for c in collectibles:
-            pygame.draw.rect(screen, GREEN, c)
-
-        # Draw all hazards as red squares
-        for h in hazards:
-            pygame.draw.rect(screen, RED, h)
+        # Draw all enemies as red squares
+        for e in enemies:
+            pygame.draw.rect(screen, RED, e)
 
         # Display the current score in the top-left corner
         score_text = font.render(f"Score: {score}", True, WHITE)
