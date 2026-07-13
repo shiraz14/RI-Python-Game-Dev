@@ -1,227 +1,206 @@
 import os
 import sys
-import random
 
-# ── ENVIRONMENT SETUP ────────────────────────────────────────────────────────
-# Set a virtual display if none exists (required for headless/Codespaces environments)
+# ── Headless / Codespaces environment fixes ───────────────────────────────────
 if not os.environ.get("DISPLAY"):
     os.environ["DISPLAY"] = ":99"
 
-# Suppress the "XDG_RUNTIME_DIR is invalid" warning by pointing to a temp folder
 if not os.environ.get("XDG_RUNTIME_DIR"):
     os.environ["XDG_RUNTIME_DIR"] = "/tmp/runtime-vscode"
     os.makedirs("/tmp/runtime-vscode", exist_ok=True)
 
-# Use a dummy audio driver so pygame doesn't crash looking for sound hardware
 os.environ["SDL_AUDIODRIVER"] = "dummy"
 
 import pygame
+import random
+from feedback import screen_shake
 
-# ── INITIALISE PYGAME ────────────────────────────────────────────────────────
-# Must be called before using any pygame features
+# ─────────────────────────────────────────
+#  INITIALISE pygame
+# ─────────────────────────────────────────
 pygame.init()
 
-# ── SCREEN SETTINGS ──────────────────────────────────────────────────────────
-# Define the window dimensions and title
+# ─────────────────────────────────────────
+#  SCREEN / WINDOW SETUP
+# ─────────────────────────────────────────
 SCREEN_WIDTH  = 640
 SCREEN_HEIGHT = 480
 TITLE         = "Pygame"
 
-# Create the game window with the specified size
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption(TITLE)
 
-# ── GAME STATE ───────────────────────────────────────────────────────────────
-# Tracks which screen is currently active: "menu" or "gameplay"
-state = "menu"
-
-# ── CLOCK & FPS ──────────────────────────────────────────────────────────────
-# Clock is used to cap the game loop at a consistent frame rate
+# ─────────────────────────────────────────
+#  CLOCK  (controls frames-per-second)
+# ─────────────────────────────────────────
 clock = pygame.time.Clock()
 FPS = 60
 
-spawn_timer = 0
-spawn_interval = 60
-
-# ── COLOURS ──────────────────────────────────────────────────────────────────
-# Reusable RGB colour constants used throughout rendering
+# ─────────────────────────────────────────
+#  COLOURS  (R, G, B)
+# ─────────────────────────────────────────
 BLACK  = (  0,   0,   0)
 WHITE  = (255, 255, 255)
-RED    = (255,   0,   0)
-GREEN  = (  0, 255,   0)
-GRAY   = ( 40,  40,  40)   # Used for the background grid lines
+GRAY   = ( 40,  40,  40)
+YELLOW = (255, 255, 0)
+GREEN = (0, 255, 0)
+RED = (255, 0, 0)
+AMBER = (255, 180, 0)
+ORANGE = (255,100, 0)
 
-# ── FONT ─────────────────────────────────────────────────────────────────────
-# Default pygame font at size 36, used for score and menu text
-font = pygame.font.Font(None, 36)
+# ─────────────────────────────────────────
+#  GAME OBJECTS
+# ─────────────────────────────────────────
 
-# ── PLAYER ───────────────────────────────────────────────────────────────────
-# White square the user controls with arrow keys
+# Player — white square, starts near top-left
+# pygame.Rect(x, y, width, height)
 player = pygame.Rect(100, 100, 40, 40)
-PLAYER_SPEED = 5             # Pixels moved per frame
+PLAYER_SPEED = 5
 
-# ── ENEMY ────────────────────────────────────────────────────────────────────
-# Red square enemy (currently disabled/commented out in logic)
-enemy = pygame.Rect(300, 200, 40, 40)
-ENEMY_SPEED = 3
-
-# ── ENEMIES ──────────────────────────────────────────────────────────────────
-# Moving red squares that reset the player and score on contact
-enemies = [
-    pygame.Rect(400, 150, 30, 30),
+targets =[
+    pygame.Rect(200, 150, 30, 30),
+    pygame.Rect(450, 300, 30, 30)
 ]
 
-# ── SCORE ────────────────────────────────────────────────────────────────────
-score = 0
+particles = []
 
-# ── GRID HELPER ──────────────────────────────────────────────────────────────
-# Draws a subtle background grid to give the arena some visual structure
-def draw_grid():
+# ─────────────────────────────────────────
+#  VARIABLES
+# ─────────────────────────────────────────
+shake_offsets = []
+
+# ── DASH ───────────────────
+dash_speed    = 18
+dash_cooldown = 60
+DASH_DURATION = 10          # frames of actual fast movement
+
+dash_timer    = 0           # cooldown countdown
+dash_active   = 0           # movement phase countdown
+dir_x         = 0
+dir_y         = 0
+
+# ─────────────────────────────────────────
+#  HELPERS
+# ─────────────────────────────────────────
+# Draw a simple grid (optional visual)
+def draw_grid(surface):
     for x in range(0, SCREEN_WIDTH, 40):
-        pygame.draw.line(screen, GRAY, (x, 0), (x, SCREEN_HEIGHT))
+        pygame.draw.line(surface, GRAY, (x, 0), (x, SCREEN_HEIGHT))
     for y in range(0, SCREEN_HEIGHT, 40):
-        pygame.draw.line(screen, GRAY, (0, y), (SCREEN_WIDTH, y))
+        pygame.draw.line(surface, GRAY, (0, y), (SCREEN_WIDTH, y))
 
-# ── GAME LOOP FLAGS ──────────────────────────────────────────────────────────
-# running: controls whether the main loop continues
-# game_over: signals that the player hit a enemy this frame
+def spawn_particles(x, y, color=YELLOW, amount=20, bias_x=0, bias_y=0):
+    for _ in range(amount):
+        particles.append({
+            "pos":   [x, y],
+            "vel":   [random.randint(-3, 3) + bias_x,
+                      random.randint(-3, 3) + bias_y],
+            "color": color,
+            "life":  random.randint(20, 40)
+        })
+
+# ─────────────────────────────────────────
+#  GAME LOOP
+# ─────────────────────────────────────────
 running = True
-game_over = False
 
-# ── MAIN GAME LOOP ───────────────────────────────────────────────────────────
-# Runs every frame until the user quits
 while running:
 
-    # ── EVENT HANDLING ───────────────────────────────────────────────────────
-    # Process all events queued since the last frame
+    # ── EVENT HANDLING ───────────────────
     for event in pygame.event.get():
-
-        # Clicking the window's X button stops the loop
         if event.type == pygame.QUIT:
             running = False
-
         if event.type == pygame.KEYDOWN:
-            # Escape key quits the game from any state
             if event.key == pygame.K_ESCAPE:
                 running = False
 
-            # Space bar on the menu transitions to gameplay
-            if state == "menu" and event.key == pygame.K_SPACE:
-                state = "gameplay"
-            
-            if state == "gameover" and event.key == pygame.K_r:
-                state = "menu"
+    # ── UPDATE ───────────────────────────
 
-    # ── GAMEPLAY UPDATE ──────────────────────────────────────────────────────
-    # All game logic is skipped while on the menu screen
-    if state == "gameplay":
+    # 1. Read keyboard input & move player
+    keys = pygame.key.get_pressed()
 
-        spawn_timer += 1
-        if spawn_timer >= spawn_interval:
-            spawn_timer = 0
-            enemies.append(pygame.Rect(random.randint(0, 600), random.randint(0, 400), 30, 30))
-
-        if spawn_interval > 15:
-            spawn_interval -= 0.005
-            
-        # ── PLAYER MOVEMENT ──────────────────────────────────────────────────
-        # Read which arrow keys are currently held and move the player accordingly
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_LEFT]:
-            player.x -= PLAYER_SPEED
-        if keys[pygame.K_RIGHT]:
-            player.x += PLAYER_SPEED
-        if keys[pygame.K_UP]:
-            player.y -= PLAYER_SPEED    # In pygame, y decreases going up
-        if keys[pygame.K_DOWN]:
-            player.y += PLAYER_SPEED
-
-        # ── BOUNDARY CLAMPING ────────────────────────────────────────────────
-        # Prevent the player from moving outside the window edges
-        player.clamp_ip(screen.get_rect())
-
-        # ── ENEMY MOVEMENT ──────────────────────────────────────────────────
-        # Each enemy tracks player
-        for e in enemies:
-            if e.x < player.x: e.x += 2
-            if e.x > player.x: e.x -= 2
-            if e.y < player.y: e.y += 2
-            if e.y > player.y: e.y -= 2
-
-        # ── ENEMY COLLISION ─────────────────────────────────────────────────
-        # If the player touches a enemy, flag game_over for handling below
-        for e in enemies:
-            if player.colliderect(e):
-                player.x, player.y = 100, 200
-                state = "gameover"
-                game_over = True
-        
-        # Increase score every frame
-        score += 1
-
-        # ── GAME OVER HANDLING ───────────────────────────────────────────────
-        # Briefly flash red, then reset all game objects back to their starting state
-        if game_over:
-            screen.fill(RED)
-            pygame.display.flip()
-            pygame.time.delay(100)      # Hold the red screen for 100 ms
-
-            # Reset player position, score
-            player.x, player.y = 300, 200
-            score = 0
-            spawn_timer = 0
-            spawn_interval = 60
-            enemies = [
-                pygame.Rect(400, 150, 30, 30),
-            ]
-            game_over = False           # Clear the flag so we don't loop here again
-
-    # ── RENDER: MENU ─────────────────────────────────────────────────────────
-    # Draw the title screen with instructions when in menu state
-    if state == "menu":
-        screen.fill(BLACK)
-
-        # Render and position the game title and start prompt
-        title_text = font.render("SURVIVE THE ARENA", True, WHITE)
-        start_text = font.render("Press SPACE to start", True, (200, 200, 200))
-        screen.blit(title_text, (150, 150))
-        screen.blit(start_text, (160, 220))
-
-        # Push the drawn frame to the display and cap the loop speed
-        pygame.display.flip()
-        clock.tick(FPS)
-
-    # ── RENDER: GAMEPLAY ─────────────────────────────────────────────────────
-    # Draw all game objects and the HUD each frame during gameplay
-    elif state == "gameplay":
-        screen.fill(BLACK)              # Clear the previous frame
-
-        draw_grid()                     # Subtle background grid
-
-        pygame.draw.rect(screen, WHITE, player)     # Player square
-
-        # Draw all enemies as red squares
-        for e in enemies:
-            pygame.draw.rect(screen, RED, e)
-
-        # Display the current score in the top-left corner
-        score_text = font.render(f"Score: {score}", True, WHITE)
-        screen.blit(score_text, (10, 10))
-
-        # Push the drawn frame to the display and cap the loop speed
-        pygame.display.flip()
-        clock.tick(FPS)
+    if keys[pygame.K_LEFT]:
+        player.x -= PLAYER_SPEED
+    if keys[pygame.K_RIGHT]:
+        player.x += PLAYER_SPEED
+    if keys[pygame.K_UP]:
+        player.y -= PLAYER_SPEED      # NOTE: UP decreases y in pygame
+    if keys[pygame.K_DOWN]:
+        player.y += PLAYER_SPEED
     
-    elif state == "gameover":
-        screen.fill((80, 0, 0))
-        over_text = font.render("GAME OVER", True, WHITE)
-        restart_text =  font.render("Press R to restart", True, (200, 200, 200))
-        screen.blit(over_text, (250, 150))
-        screen.blit(restart_text, (220, 220))
-        pygame.display.flip()
-        clock.tick(FPS)
+    if dash_timer == 0 and keys[pygame.K_LSHIFT]:
+        dir_x = (1 if keys[pygame.K_RIGHT] else -1 if keys[pygame.K_LEFT] else 0)
+        dir_y = (1 if keys[pygame.K_DOWN]  else -1 if keys[pygame.K_UP]   else 0)
+        dash_timer  = dash_cooldown
+        dash_active = DASH_DURATION
+        # Initial burst particles
+        spawn_particles(player.centerx, player.centery,
+                        color=YELLOW, amount=40,
+                        bias_x=-dir_x * 5, bias_y=-dir_y * 5)
 
-# ── CLEANUP ──────────────────────────────────────────────────────────────────
-# Shut down pygame properly and exit the Python process
+    # Apply movement every frame of the active phase
+    if dash_active > 0:
+        player.x += dir_x * dash_speed
+        player.y += dir_y * dash_speed
+        dash_active -= 1
+        # Trail every active frame
+        spawn_particles(player.centerx - dir_x * 15,
+                        player.centery - dir_y * 15,
+                        color=YELLOW, amount=6,
+                        bias_x=-dir_x * 3, bias_y=-dir_y * 3)
+
+    if dash_timer > 0:
+        dash_timer -= 1
+
+    player.clamp_ip(screen.get_rect())
+
+    for p in particles[:]:
+        p["pos"][0] += p["vel"][0]
+        p["pos"][1] += p["vel"][1]
+        p["life"] -= 1
+        if p["life"] <= 0:
+            particles.remove(p)
+    
+    for t in targets[:]:
+        if player.colliderect(t) and dash_active > 0:
+            spawn_particles(t.centerx, t.centery, color=ORANGE, amount=40)
+            shake_offsets = screen_shake()
+            targets.remove(t)
+
+    # ── RENDER ───────────────────────────
+
+    screen.fill(BLACK)
+    game_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+    game_surface.fill(BLACK)
+    draw_grid(game_surface)
+
+    # Cooldown bar
+    bar_fill  = int(200 * (1 - dash_timer / dash_cooldown)) if dash_timer > 0 else 200
+    bar_color = GREEN if dash_timer == 0 else RED
+    pygame.draw.rect(game_surface, GRAY,      (20, SCREEN_HEIGHT - 20, 200, 12))
+    pygame.draw.rect(game_surface, bar_color, (20, SCREEN_HEIGHT - 20, bar_fill, 12))
+
+    for p in particles:
+        pygame.draw.circle(game_surface, p["color"],
+                           (int(p["pos"][0]), int(p["pos"][1])), 3)
+
+    pygame.draw.rect(game_surface, WHITE, player)
+
+    for t in targets:
+        pygame.draw.rect(game_surface, AMBER, t)
+
+    # 2. Pop one offset per frame and blit the surface shifted
+    ox, oy = shake_offsets.pop(0) if shake_offsets else (0, 0)
+    screen.blit(game_surface, (ox, oy))
+
+    # 4. Flip / update the display
+    pygame.display.flip()
+
+    # 5. Tick the clock (cap at FPS)
+    clock.tick(FPS)
+
+# ─────────────────────────────────────────
+#  CLEAN UP
+# ─────────────────────────────────────────
 pygame.quit()
 sys.exit()
